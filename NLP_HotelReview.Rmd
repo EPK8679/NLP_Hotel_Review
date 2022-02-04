@@ -1,0 +1,415 @@
+---
+title: "NLP"
+author: "EPK"
+date: "04/02/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+---
+
+Understanding the performance of a hotel's hospitality by its cleanliness, timely response to guest concerns, and other characteristics are measured by visitor reviews as well as their overall experience in the hotel. As text analytics is the process of extracting high-quality information from text, it plays a critical role in establishing the factors that influence determining the best and worst evaluations from consumers by analysing text review data with the help of corresponding reviews. 
+
+
+
+## Text Analysis
+
+---
+
+### Text Pre-Processing 
+
+Pre-processing the data, such as cleaning and extracting the correct text data for the topic modelling process, is required because the text in the dataset is in an unstructured format. The topic model aids in the analysis of the best and worst hotel reviews by utilising significant factors in all topics. The study started with the installation of required packages and a review of the dataset's structure, which aids in understanding the data class type.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+#Installing Libraries
+# install.packages("dplyr")
+# install.packages("tm")
+# install.packages("stringr")
+# install.packages("RColorBrewer")
+# install.packages("wordcloud")
+# install.packages("topicmodels")
+# install.packages("ggplot2")
+# install.packages("LDAvis")
+# install.packages("servr")
+# install.packages("SnowballC")
+# install.packages("textcat")
+# install.packages("textmineR")
+# install.packages("tidyverse")
+# install.packages("textstem")
+
+library(dplyr) # basic data manipulation 
+library(tm) # package for text mining package 
+library(stringr) # package for dealing with string
+library(RColorBrewer)# package to get special theme color 
+library(wordcloud) # package to create wordcloud 
+library(topicmodels) # package for topic modelling 
+library(ggplot2) # basic data visualization 
+library(LDAvis) # LDA specific visualization 
+library(servr) # interactive support for LDA visualization
+library(SnowballC) #UTF-8 Library
+library(textcat) #For language filter
+library(textmineR) #Text mining library
+library(tidyverse)   #To tidy the data structure
+library(textstem) # For stemming and lemmatization
+
+rm(list=ls())
+
+#Reading the hotels Data
+review_data <- read.csv("HotelsData.csv",stringsAsFactors = TRUE )
+set.seed(931) #Setting seed 
+test_review <- sample_n(review_data,1000) #Taking the sample of 1000 from review_data
+str(test_review) #Structure of test_review
+test_review$Review.score <- as.factor(test_review$Review.score) #Converting the Review score to factor
+
+```
+
+#### Review Criteria
+
+The Hotel.csv dataset has two variables: review score and review text. The variable review score's class type is integer, however it must be converted to factor because it is used as a scale factor of satisfaction, which is a qualitative variable. This modification makes it easier to determine whether a review is positive or negative.The dataset contains a large amount of text data, and from that dataset, 1000 reviews are picked at random using the seed value, and with those reviews, the text written in English language must be extracted using the textcat function.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+#Selecting English Reviews
+original_review <- data.frame()
+for(i in 1:nrow(test_review) ) {
+  
+  if(textcat(test_review$Text.1[i]) == "english"){
+    orginal_review_dup <- test_review[i,]
+    original_review <- rbind(original_review,orginal_review_dup)
+  }
+  else{
+    next
+  }
+  
+}
+```
+
+The review score was used as a criterion for selecting excellent and negative reviews. The dataframe contains English reviews that have been filtered using the review score function, which are used with the dplyr function "filter." The review score of '4' and '5' is classified as excellent/positive, whereas the score of "1" and "2" is classified as bad/negative.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+#Filtering the excellent and bad reviews
+excellent_review  <- original_review %>%
+  filter(Review.score == "4" | Review.score =="5")
+
+bad_review <- original_review %>%
+  filter(Review.score == "2" | Review.score =="1")
+```
+
+#### Text Cleaning
+
+The first step is to convert the review text to UTF-8 format so that any data outliers that can't be pre-processed with tm_map or other text mining methods can be recognised for tidying the data. The next step in the analysis is text pre-processing, in which the good and bad reviews should be converted to vector format using the corpus function, and the document strings can be Lemmatized using the tm map function for cleaning and finding the frequency of terms occurring in text for each topic model using the document matrix function. 
+
+With the use of lemmatization, words like "booking," "booked," and "book" that are linked to room checking can be shortened to "book." The document term matrix has a parameter named control, which is used to tidy data using the stopwords, remove_white_space, remove_punctuation, and to_lower functions.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+
+#Conversion of Review Text to standard form, some outlier texts can't read for tm_map
+reviews_excellent <- stringr::str_conv(excellent_review$Text.1, "UTF-8")
+reviews_bad <- stringr::str_conv(bad_review$Text.1, "UTF-8")
+
+# Create Corpus
+docs_review_excellent <- Corpus(VectorSource(reviews_excellent))
+docs_reviews_bad <- Corpus(VectorSource(reviews_bad))
+
+#Lemmatisation of Data
+docs_review_excellent <- tm_map(docs_review_excellent, lemmatize_strings)
+docs_reviews_bad <- tm_map(docs_reviews_bad, lemmatize_strings)
+
+#Creation of Document Term Matrix 
+dtmdocs_excellent <- DocumentTermMatrix(docs_review_excellent, 
+                              control = list(tolower =TRUE,lemma=TRUE, removePunctuation = TRUE,
+                                             removeNumbers = TRUE, stopwords = TRUE,
+                                             stripWhitespace = TRUE))
+print("Excelelnt Review Document Term Matrix")
+dtmdocs_excellent
+dtmdocs_bad <- DocumentTermMatrix(docs_reviews_bad,
+                                        control = list(tolower =TRUE,lemma=TRUE,removePunctuation = TRUE,
+                                                       removeNumbers = TRUE, stopwords = TRUE,
+                                                       stripWhitespace = TRUE))
+print("Bad Review Document Term Matrix")
+dtmdocs_bad
+```
+
+#### Word Cloud
+
+The next step is to determine the frequency of each word in the text document using the apply function, which returns the number of words in each document when passed the argument sum. To find the frequency of each word in the full document, convert the dtmdocs of excellent and bad reviews to matrix form using the as.matrix function and use the colsums function to find the frequency of each word in the entire text which helps to do the visulaisation for the frequent terms in excellent and bad review.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+#Applying  sum function to obtain the  frequency of words in each text.
+raw.sum_excellent <- apply(dtmdocs_excellent,1,FUN=sum) 
+raw.sum_bad <- apply(dtmdocs_bad,1,FUN=sum)
+
+
+#Storing to the document with the frequency of words ! = 0 
+dtmdocs_excellent <- dtmdocs_excellent[raw.sum_excellent!=0,]
+dtmdocs_bad <- dtmdocs_bad[raw.sum_bad!=0,]
+
+
+
+
+#Converting to Matrix 
+dtm.excellent_update <- as.matrix(dtmdocs_excellent)
+dtm.bad_update <- as.matrix(dtmdocs_bad)
+
+
+#Obtaining Word Frequency
+frequency_excellent <- colSums(dtm.excellent_update)
+frequency_bad <- colSums(dtm.bad_update)
+
+
+
+#Sorting the words 
+frequency_excellent <- sort(frequency_excellent, decreasing=TRUE) 
+frequency_bad <- sort(frequency_bad, decreasing=TRUE) 
+
+frequency_excellent[1:5]
+frequency_bad[1:5]
+#Total Length of doc
+doc_length_excllent  <- rowSums(dtm.excellent_update)
+doc_length_bad  <- rowSums(dtm.bad_update)
+
+
+# get back the word
+
+words_excellent <- names(frequency_excellent)
+words_bad <- names(frequency_bad)
+
+
+#Displaying the Excellent Review and Bad Review most frequent words
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Word Cloud of Excellent Review",col="blue")
+
+wordcloud(words_excellent[1:100], frequency_excellent[1:100], rot.per=0.15, random.order = FALSE, scale=c(4,0.5),
+          random.color = FALSE, colors=brewer.pal(8,"Dark2"))
+
+layout(matrix(c(1, 2), nrow=2), heights=c(1, 4))
+par(mar=rep(0, 4))
+plot.new()
+text(x=0.5, y=0.5, "Word Cloud of Bad Review",col="blue")
+wordcloud(words_bad[1:100], frequency_bad[1:100], rot.per=0.15, random.order = FALSE, scale=c(4,0.5),
+          random.color = FALSE, colors=brewer.pal(8,"Accent"), main ="Frequent Terms in Bad Review")
+
+```
+The frequent words in the excellent review, according to the wordcloud, are hotel, room, good, stay, and staff, all of which are positive words obtained from the excellent review. According to the wordcloud, the most common words in the negative review are room, hotel,and stay, all of which are evident in the bad review.
+
+
+### Topic Modelling
+
+Topic models are machine-learning techniques that use massive collections of documents to find hidden or latent theme structures (i.e. subjects). No prior labelling or annotation is required because the latent theme structures emerge automatically from the statistical features of the documents. Thematic frameworks can then be utilised to automatically categorise or summarise documents on a scale that would be hard to accomplish manually (Syed and Spruit, 2017). The most common method for topic modelling is latent Dirichlet allocation, which is used to extract the major factors of good and negative reviews that can be analysed for topic selection.
+
+#### LDA
+
+LDA aids in the generation of the probability of each word falling under the topic, which aids in the identification of the corpus hidden structure by using Gibbs method. The first step in calculating the coherence score is to approximate the posterior distribution, which allows to assign various probabilities to each word in the topic distribution. The words that occur the most frequently are the ones with the highest probability.This aids in determining the 'k' value using the coherence score, where 'k' is the number of modelling topics.
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+# set number of iteration to run, more is usually better but take longer.
+iter <- 2000 
+
+#Setting coherence score as empty
+coherence_excellent <- c()
+coherence_bad <- c()
+
+#Finding K for Topic Modelling, excellent Review
+for (i in (5:25)){
+  ldaOut_excellent <-LDA(dtmdocs_excellent,i, method="Gibbs",
+               control=list(iter=iter,seed=931))
+  phi_exce <- topicmodels::posterior(ldaOut_excellent)$terms %>% as.matrix
+  theta_exce <- topicmodels::posterior(ldaOut_excellent)$topics %>% as.matrix 
+  coherence_one_excel <- mean(textmineR::CalcProbCoherence(phi = phi_exce,
+                              dtm = dtm.excellent_update))
+  coherence_excellent<-append(coherence_excellent,coherence_one_excel)
+}
+
+#Determines the Maximum Value of K for Excellent Review
+k_excellent <- c(5:25)[which.max(coherence_excellent)]
+coherence_mat_excellent <- data.frame(k = c(5:25), coherence = coherence_excellent,
+                            stringsAsFactors = FALSE)
+#Plotting the graph for coherence for Excellent Review
+ggplot(coherence_mat_excellent, aes(x = k, y = coherence)) + geom_point() +
+  geom_line(group = 1)+
+  ggtitle("Best Excellent Review Topic by Coherence Score") + theme_minimal() + scale_x_continuous(breaks = seq(1,50,1)) + ylab("Coherence")
+
+#Finding K for Topic Modelling, Bad Review
+for (i in (5:25)){
+  ldaOut_bad <-LDA(dtmdocs_bad,i, method="Gibbs",
+                         control=list(iter=iter,seed=931))
+  phi_bad <- topicmodels::posterior(ldaOut_bad)$terms %>% as.matrix
+  theta_bad <- topicmodels::posterior(ldaOut_bad)$topics %>% as.matrix 
+  coherence_one_bad <- mean(textmineR::CalcProbCoherence(phi = phi_bad,
+                                                           dtm = dtm.bad_update))
+  coherence_bad<-append(coherence_bad,coherence_one_bad)
+}
+
+#Determines the Maximum Value of K for Bad Review
+k_bad <- c(5:25)[which.max(coherence_bad)]
+
+coherence_mat_bad <- data.frame(k = c(5:25), coherence = coherence_bad,
+                                      stringsAsFactors = FALSE)
+#Plotting the graph for coherence for Bad Review
+ggplot(coherence_mat_bad, aes(x = k, y = coherence)) + geom_point() +
+  geom_line(group = 1)+
+  ggtitle("Bad Review Topic by Coherence Score") + theme_minimal() + scale_x_continuous(breaks = seq(1,50,1)) + ylab("Coherence")
+
+```
+The graph clearly shows that there are 10 and 11 topics chosen for topic modelling for excellent and bad reviews, respectively.
+
+
+The topic modelling is now carried out with the help of the k value acquired from the measure of coherence score, which aids in training the topic model using LDA and identifies the frequently occurring terms as well as identifying the probability of each word under the model's topics. The same procedure is used with the good and bad review document term matrix to determine the probability of the most often appearing terms in each topic, which aids in the identification of the text model's best factors.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Substituting the Excellent 'k' value in LDA for topic modeling
+ldaOut_excellent <-LDA(dtmdocs_excellent,k_excellent, method="Gibbs", control=list(iter=iter,seed=931))
+phi_exce <- topicmodels::posterior(ldaOut_excellent)$terms %>% as.matrix 
+#matrix, with each row containing the distribution
+# over terms for a topic,
+theta_exec <- topicmodels::posterior(ldaOut_excellent)$topics %>% as.matrix
+#matrix, with each row containing the probability 
+# distribution over topics for a document,
+
+# Which highest alpha 'term' is part of which Excellent Review
+ldaOut.terms_excellent <- as.matrix(terms(ldaOut_excellent, 10))
+
+
+
+# Which 'topic' is the Excellent review in (highest probability)
+ldaOut.topics_excellent <- data.frame(topics(ldaOut_excellent))
+ldaOut.topics_excellent$index <- as.numeric(row.names(ldaOut.topics_excellent)) 
+excellent_review$index <- as.numeric(row.names(excellent_review))
+
+excellent_review_withtopic_excel <- merge(excellent_review, ldaOut.topics_excellent, by='index',all.x=TRUE)
+
+excellent_review_withtopic_excel<-excellent_review_withtopic_excel[order(excellent_review_withtopic_excel$index), ]
+
+
+
+# For Excellent review, how closely it associate with each topics
+topic_excelProbabilities <- as.data.frame(ldaOut_excellent@gamma)
+```
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+
+#Substituting the Bad 'k' value in LDA for topic modeling
+ldaOut_bad <-LDA(dtmdocs_bad,k_bad, method="Gibbs", control=list(iter=iter,seed=931))
+phi_bad <- topicmodels::posterior(ldaOut_bad)$terms %>% as.matrix 
+#matrix, with each row containing the distribution
+# over terms for a topic,
+theta_bad <- topicmodels::posterior(ldaOut_bad)$topics %>% as.matrix
+#matrix, with each row containing the probability 
+# distribution over topics for a document,
+
+# Which highest alpha 'term' is part of which BAD Review
+ldaOut.terms_bad <- as.matrix(terms(ldaOut_bad, 10))
+
+# Which 'topic' is the BAD review in (highest probability)
+ldaOut.topics_bad <- data.frame(topics(ldaOut_bad))
+ldaOut.topics_bad$index <- as.numeric(row.names(ldaOut.topics_bad)) 
+bad_review$index <- as.numeric(row.names(bad_review))
+
+bad_review_withtopic_bad <- merge(bad_review, ldaOut.topics_bad, by='index',all.x=TRUE) 
+bad_review_withtopic_bad <- bad_review_withtopic_bad[order(bad_review_withtopic_bad$index), ]
+
+
+
+# For Excellent review, how closely it associate with each topics
+topic_badProbabilities <- as.data.frame(ldaOut_bad@gamma)
+```
+
+#### Visualisation 
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE,eval = FALSE}
+vocab_excel <- colnames(phi_exce) #vocab list in DTM Excellent
+# create the JSON object to feed the visualization in LDAvis: Excellent Reviews
+json_lda_excel <- createJSON(phi = phi_exce, theta = theta_exec,
+                       vocab = vocab_excel, doc.length = doc_length_excllent,
+                       term.frequency = frequency_excellent)
+serVis(json_lda_excel, out.dir = 'vis', open.browser = TRUE)
+```
+
+
+#### Satisfaction of the Customers
+From the excellent topic modelling the best three factors are topic 3,6 and 10 respectively. The graphs are shown below,
+
+![Excellent_Topic-3](Factor1_Excellent.png)
+
+The positive ratings for topic 3 were related to the hotel's food, which they offered with the highest quality food during breakfast time, and consumers enjoyed the buffet.
+
+```{r,echo= FALSE,message=FALSE, warning=FALSE}
+print("The label for Topic 3;")
+colnames(ldaOut.terms_excellent)[3] <- c("FOOD")
+colnames(ldaOut.terms_excellent)[3]
+```
+![Excellent_Topic-6](Factor2_Excellent.png)
+
+The hotel's location, which is quite close to the main attraction and very easy to travel between with the use of an underground tube, was reviewed in topic 6.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+print("The label for Topic 6;")
+colnames(ldaOut.terms_excellent)[6] <- c("LOCATION")
+colnames(ldaOut.terms_excellent)[6]
+```
+
+![Excellent_Topic-10](Factor3_excelent.png)
+
+For topic 10, the hotel's hospitality is complimented, with comments on the friendliness and attentiveness of the employees.
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+print("The label for Topic 10;")
+colnames(ldaOut.terms_excellent)[10] <- c("HOSPITALITY")
+colnames(ldaOut.terms_excellent)[10]
+```
+
+
+
+
+#### Dissatisfaction of the Customers
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE,eval = FALSE}
+vocab_bad <- colnames(phi_bad) #vocab list in DTM BAD
+# create the JSON object to feed the visualization in LDAvis: BAD Reviews
+json_lda_bad <- createJSON(phi = phi_bad, theta = theta_bad,
+                             vocab = vocab_bad, doc.length = doc_length_bad,
+                             term.frequency = frequency_bad)
+serVis(json_lda_bad, out.dir = 'vis', open.browser = TRUE)
+```
+
+Topics 7,9, and 11 are the three sources of dissatisfaction based on the negative review topic modelling. The graphs are shown below,
+
+![Bad_Topic-7](Bad_Factor_7.png)
+
+The biggest source of dissatisfaction for topic 7 was the hotel's poor customer service, as customers complained about refunds and argued over the phone conversation.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+print("The label for Topic 7;")
+colnames(ldaOut.terms_bad)[9] <- c("Poor Customer Service")
+colnames(ldaOut.terms_bad)[9]
+```
+
+![Bad_Topic-6](Bad_factor6.png)
+
+The main dissatisfaction given by consumers for Topic 6 related to consumers are complaining about the bed size and shower issues.
+
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+print("The label for Topic 6;")
+colnames(ldaOut.terms_bad)[6] <- c("Bad Room Quality")
+colnames(ldaOut.terms_bad)[6]
+```
+
+![Bad_Topic-2](Bad_factor2.png)
+The main dissatisfaction given by consumers for Topic 2 related to consumers are complaining about the visiting area is dirty.
+```{r,echo=FALSE,message=FALSE, warning=FALSE}
+print("The label for Topic 2;")
+colnames(ldaOut.terms_bad)[8] <- c("Unclean Area")
+colnames(ldaOut.terms_bad)[8]
+```
+
+
+## Conclusion
+
+The topic modelling helps to uncover satisfied and dissatisfied customer responses, providing insight for hotels to improve their systems if customers leave negative reviews. However, according to the analysis, the majority of customers are satisfied with the hotel, with approximately 75% of excellent reviews and only 10% of negative reviews. 
+
+One of the main drawback saw in the  bad reviews, there is a mix of good reviews send by customers which was observed in topic modelling.
